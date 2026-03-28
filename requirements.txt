@@ -1,4 +1,5 @@
+streamlit
 youtube-transcript-api
-openai
 python-dotenv
+google-generativeai
 markdown
