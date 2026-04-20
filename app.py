@@ -1,5 +1,6 @@
 import os
 import re
+import time
 from pathlib import Path
 
 import markdown
@@ -9,12 +10,20 @@ from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api.proxies import WebshareProxyConfig
 import google.generativeai as genai
 
+
+# -------------------------------------------------
+# Page config
+# -------------------------------------------------
 st.set_page_config(
     page_title="YouTube Summarizer GenAI",
     page_icon="🎥",
     layout="wide"
 )
 
+
+# -------------------------------------------------
+# Load secrets / env
+# -------------------------------------------------
 load_dotenv()
 
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", None) or os.getenv("GEMINI_API_KEY")
@@ -22,14 +31,16 @@ PROXY_USERNAME = st.secrets.get("PROXY_USERNAME", None) or os.getenv("PROXY_USER
 PROXY_PASSWORD = st.secrets.get("PROXY_PASSWORD", None) or os.getenv("PROXY_PASSWORD")
 
 if not GEMINI_API_KEY:
-    st.error(
-        "GEMINI_API_KEY not found. Add it in Streamlit App Settings -> Secrets."
-    )
+    st.error("GEMINI_API_KEY not found. Add it in Streamlit App Settings -> Secrets.")
     st.stop()
 
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-2.5-flash")
 
+
+# -------------------------------------------------
+# Session state
+# -------------------------------------------------
 DEFAULT_STATE = {
     "video_id": "",
     "transcript": "",
@@ -45,6 +56,9 @@ for key, value in DEFAULT_STATE.items():
         st.session_state[key] = value
 
 
+# -------------------------------------------------
+# Helper functions
+# -------------------------------------------------
 def extract_video_id(url: str) -> str:
     patterns = [
         r"(?:v=|\/)([0-9A-Za-z_-]{11}).*",
@@ -84,7 +98,10 @@ def fetch_transcript(video_id: str) -> str:
     except Exception as e:
         raise RuntimeError(
             "Failed to fetch transcript. "
-            "If this app is deployed, YouTube may still be blocking the current IP/proxy. "
+            "Possible reasons:\n"
+            "1. The video has no accessible English captions.\n"
+            "2. YouTube blocked the current server/proxy IP.\n"
+            "3. The video is restricted or unavailable.\n\n"
             f"Details: {e}"
         )
 
@@ -109,32 +126,38 @@ def save_outputs(transcript: str, summary: str, article_md: str, article_html: s
     (output_dir / "article.html").write_text(article_html, encoding="utf-8")
 
 
-import time
-
 def call_llm(prompt: str) -> str:
-    max_retries = 3
+    max_retries = 4
 
     for attempt in range(max_retries):
         try:
             response = model.generate_content(prompt)
+
+            if not hasattr(response, "text") or not response.text:
+                raise RuntimeError("Gemini returned an empty response.")
+
             return response.text.strip()
 
         except Exception as e:
             error_message = str(e).lower()
 
-            if "429" in error_message or "quota" in error_message:
-                wait_time = 3 + attempt * 2  # increasing delay
-                st.warning(f"Quota hit. Retrying in {wait_time} seconds...")
+            if "429" in error_message or "quota" in error_message or "resource_exhausted" in error_message:
+                wait_time = 35 + attempt * 10
+                st.warning(f"Gemini quota reached. Retrying in {wait_time} seconds...")
                 time.sleep(wait_time)
                 continue
 
             raise RuntimeError(f"LLM Error: {e}")
 
-    raise RuntimeError("Failed after multiple retries due to quota limits.")
+    raise RuntimeError(
+        "Gemini API quota is exceeded right now. "
+        "Please wait about 1 minute and try again."
+    )
 
 
 def generate_summary_and_article(transcript: str) -> tuple[str, str]:
-    shortened_transcript = transcript[:12000]
+    # Reduced length to lower Gemini quota usage
+    shortened_transcript = transcript[:4000]
 
     prompt = f"""
 You are an expert technical content writer.
@@ -205,12 +228,15 @@ def clear_app() -> None:
     st.cache_data.clear()
 
 
+# -------------------------------------------------
+# UI
+# -------------------------------------------------
 st.title("YouTube Summarizer GenAI")
 st.write("Paste a YouTube link to generate transcript, summary, and article.")
 
 st.info(
     "This deployed version uses proxy-based transcript fetching. "
-    "If a specific video still fails, it may not have accessible captions or the proxy may be temporarily blocked."
+    "If a video still fails, it may not have captions, or YouTube may be blocking the current proxy/server IP."
 )
 
 youtube_url = st.text_input("Paste YouTube Video URL")
@@ -225,13 +251,17 @@ with col1:
     )
 
 with col2:
-    clear_btn = st.button("Clear", use_container_width=True)
+    clear_btn = st.button(
+        "Clear",
+        use_container_width=True,
+        disabled=st.session_state.processing
+    )
 
 if clear_btn:
     clear_app()
     st.rerun()
 
-if generate_btn and not st.session_state.generated:
+if generate_btn:
     st.session_state.processing = True
 
     try:
@@ -240,17 +270,21 @@ if generate_btn and not st.session_state.generated:
                 st.warning("Please enter a YouTube URL.")
                 st.stop()
 
+            # Step 1: Extract video ID
             video_id = extract_video_id(youtube_url)
             st.session_state.video_id = video_id
 
+            # Step 2: Fetch transcript
             transcript = fetch_transcript(video_id)
-            cleaned_transcript = clean_transcript(transcript)
 
+            # Step 3: Clean transcript
+            cleaned_transcript = clean_transcript(transcript)
             if not cleaned_transcript:
                 raise RuntimeError("Transcript is empty after cleaning.")
 
             st.session_state.transcript = cleaned_transcript
 
+            # Step 4: Generate summary + article
             summary, article_md = generate_summary_and_article(cleaned_transcript)
             article_html = markdown_to_html(article_md)
 
@@ -259,6 +293,7 @@ if generate_btn and not st.session_state.generated:
             st.session_state.article_html = article_html
             st.session_state.generated = True
 
+            # Step 5: Save output files
             save_outputs(
                 st.session_state.transcript,
                 st.session_state.summary,
@@ -274,6 +309,10 @@ if generate_btn and not st.session_state.generated:
     finally:
         st.session_state.processing = False
 
+
+# -------------------------------------------------
+# Output section
+# -------------------------------------------------
 if st.session_state.generated:
     tab1, tab2, tab3, tab4 = st.tabs([
         "Summary",
