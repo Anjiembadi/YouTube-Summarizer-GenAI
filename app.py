@@ -127,7 +127,7 @@ def save_outputs(transcript: str, summary: str, article_md: str, article_html: s
 
 
 def call_llm(prompt: str) -> str:
-    max_retries = 4
+    max_retries = 2
 
     for attempt in range(max_retries):
         try:
@@ -142,17 +142,17 @@ def call_llm(prompt: str) -> str:
             error_message = str(e).lower()
 
             if "429" in error_message or "quota" in error_message or "resource_exhausted" in error_message:
-                wait_time = 35 + attempt * 10
-                st.warning(f"Gemini quota reached. Retrying in {wait_time} seconds...")
-                time.sleep(wait_time)
-                continue
+                if attempt < max_retries - 1:
+                    wait_time = 35
+                    st.warning(f"Quota reached. Waiting {wait_time} seconds before retry...")
+                    time.sleep(wait_time)
+                    continue
+
+                raise RuntimeError(
+                    "Free Gemini quota reached. Please wait 1 minute and try again."
+                )
 
             raise RuntimeError(f"LLM Error: {e}")
-
-    raise RuntimeError(
-        "Gemini API quota is exceeded right now. "
-        "Please wait about 1 minute and try again."
-    )
 
 
 
