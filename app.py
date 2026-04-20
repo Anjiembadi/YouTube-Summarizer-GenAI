@@ -155,35 +155,25 @@ def call_llm(prompt: str) -> str:
     )
 
 
-def generate_summary_and_article(transcript: str) -> tuple[str, str]:
-    # Reduced length to lower Gemini quota usage
-    shortened_transcript = transcript[:4000]
+
+ def generate_summary_and_article(transcript: str) -> tuple[str, str]:
+    shortened_transcript = transcript[:2000]
 
     prompt = f"""
-You are an expert technical content writer.
+You are an expert content writer.
 
-From the transcript below, do all tasks carefully.
+From the transcript below:
 
-TASK 1:
-Write a short summary in 5 to 7 lines.
+1. Write a short summary in 5 lines
+2. Write 5 key takeaways
+3. Write a short article in markdown
 
-TASK 2:
-Write 5 bullet point key takeaways.
+Keep it concise and beginner-friendly.
 
-TASK 3:
-Write a detailed article in Markdown format.
-
-Requirements for article:
-- Add a suitable title
-- Add an introduction
-- Add proper section headings
-- Add a conclusion
-- Keep it professional, readable, clear, and beginner-friendly
-
-Return output EXACTLY in this format:
+Return in this format:
 
 ===SUMMARY===
-<short summary here>
+<summary>
 
 ===KEY TAKEAWAYS===
 - point 1
@@ -194,7 +184,7 @@ Return output EXACTLY in this format:
 
 ===ARTICLE===
 # Title
-Article content in markdown...
+Short article here
 
 Transcript:
 {shortened_transcript}
