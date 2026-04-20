@@ -6,9 +6,8 @@ import markdown
 import streamlit as st
 from dotenv import load_dotenv
 from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api.proxies import WebshareProxyConfig
 import google.generativeai as genai
-
-
 
 st.set_page_config(
     page_title="YouTube Summarizer GenAI",
@@ -16,26 +15,22 @@ st.set_page_config(
     layout="wide"
 )
 
-
-
 load_dotenv()
 
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", None) or os.getenv("GEMINI_API_KEY")
+PROXY_USERNAME = st.secrets.get("PROXY_USERNAME", None) or os.getenv("PROXY_USERNAME")
+PROXY_PASSWORD = st.secrets.get("PROXY_PASSWORD", None) or os.getenv("PROXY_PASSWORD")
 
 if not GEMINI_API_KEY:
     st.error(
-        "GEMINI_API_KEY not found. "
-        "For local use, add it in .env. "
-        "For Streamlit Cloud, add it in App Settings -> Secrets."
+        "GEMINI_API_KEY not found. Add it in Streamlit App Settings -> Secrets."
     )
     st.stop()
 
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-2.5-flash")
 
-
 DEFAULT_STATE = {
-    "source_mode": "YouTube URL",
     "video_id": "",
     "transcript": "",
     "summary": "",
@@ -67,14 +62,19 @@ def extract_video_id(url: str) -> str:
 
 @st.cache_data(show_spinner=False)
 def fetch_transcript(video_id: str) -> str:
-    """
-    Best-effort transcript fetch.
-    Works locally more reliably.
-    Can fail on Streamlit Cloud due to YouTube blocking cloud IPs.
-    """
     try:
-        api = YouTubeTranscriptApi()
-        transcript = api.fetch(video_id)
+        if PROXY_USERNAME and PROXY_PASSWORD:
+            api = YouTubeTranscriptApi(
+                proxy_config=WebshareProxyConfig(
+                    proxy_username=PROXY_USERNAME,
+                    proxy_password=PROXY_PASSWORD,
+                    filter_ip_locations=["in", "sg", "us"]
+                )
+            )
+        else:
+            api = YouTubeTranscriptApi()
+
+        transcript = api.fetch(video_id, languages=["en"])
         transcript_text = " ".join(
             item.text if hasattr(item, "text") else item["text"]
             for item in transcript
@@ -82,21 +82,11 @@ def fetch_transcript(video_id: str) -> str:
         return transcript_text
 
     except Exception as e:
-        error_text = str(e)
-
-        if (
-            "blocking requests from your IP" in error_text.lower()
-            or "ip" in error_text.lower()
-            or "requestblocked" in error_text.lower()
-            or "could not retrieve a transcript" in error_text.lower()
-        ):
-            raise RuntimeError(
-                "Could not fetch transcript from YouTube in the deployed app. "
-                "This usually happens because YouTube blocks requests from cloud server IPs. "
-                "Use the 'Paste Transcript' or 'Upload Transcript File' option on Streamlit Cloud."
-            )
-
-        raise RuntimeError(f"Failed to fetch transcript: {e}")
+        raise RuntimeError(
+            "Failed to fetch transcript. "
+            "If this app is deployed, YouTube may still be blocking the current IP/proxy. "
+            f"Details: {e}"
+        )
 
 
 def clean_transcript(text: str) -> str:
@@ -124,21 +114,17 @@ def call_llm(prompt: str) -> str:
         response = model.generate_content(prompt)
         return response.text.strip()
     except Exception as e:
-        error_message = str(e)
+        error_message = str(e).lower()
 
-        if "429" in error_message or "quota" in error_message.lower():
+        if "429" in error_message or "quota" in error_message:
             raise RuntimeError(
-                "Gemini quota exceeded for this API key/project. "
-                "Please wait 1-2 minutes and try again."
+                "Gemini quota exceeded. Wait a bit and try again."
             )
 
         raise RuntimeError(f"LLM Error: {e}")
 
 
 def generate_summary_and_article(transcript: str) -> tuple[str, str]:
-    """
-    Single Gemini call to reduce quota usage.
-    """
     shortened_transcript = transcript[:12000]
 
     prompt = f"""
@@ -210,40 +196,15 @@ def clear_app() -> None:
     st.cache_data.clear()
 
 
-
 st.title("YouTube Summarizer GenAI")
-st.write("Convert a transcript into a summary and article-style content.")
+st.write("Paste a YouTube link to generate transcript, summary, and article.")
 
-source_mode = st.radio(
-    "Choose input method",
-    ["YouTube URL", "Paste Transcript", "Upload Transcript File"],
-    horizontal=True
+st.info(
+    "This deployed version uses proxy-based transcript fetching. "
+    "If a specific video still fails, it may not have accessible captions or the proxy may be temporarily blocked."
 )
-st.session_state.source_mode = source_mode
 
-input_transcript = ""
-youtube_url = ""
-uploaded_file = None
-
-if source_mode == "YouTube URL":
-    st.info(
-        "Note: On Streamlit Cloud, YouTube transcript fetching may fail because "
-        "YouTube often blocks cloud-provider IPs. If that happens, use Paste Transcript."
-    )
-    youtube_url = st.text_input("Paste YouTube Video URL")
-
-elif source_mode == "Paste Transcript":
-    input_transcript = st.text_area(
-        "Paste transcript here",
-        height=250,
-        placeholder="Paste the full transcript text here..."
-    )
-
-else:
-    uploaded_file = st.file_uploader(
-        "Upload transcript file (.txt)",
-        type=["txt"]
-    )
+youtube_url = st.text_input("Paste YouTube Video URL")
 
 col1, col2 = st.columns(2)
 
@@ -266,38 +227,14 @@ if generate_btn and not st.session_state.generated:
 
     try:
         with st.spinner("Processing..."):
+            if not youtube_url.strip():
+                st.warning("Please enter a YouTube URL.")
+                st.stop()
 
-            # -----------------------------
-            # Get transcript based on source
-            # -----------------------------
-            if source_mode == "YouTube URL":
-                if not youtube_url.strip():
-                    st.warning("Please enter a YouTube URL.")
-                    st.stop()
+            video_id = extract_video_id(youtube_url)
+            st.session_state.video_id = video_id
 
-                st.subheader("Step 1: Extracting Video ID")
-                video_id = extract_video_id(youtube_url)
-                st.session_state.video_id = video_id
-                st.success(f"Video ID: {video_id}")
-
-                st.subheader("Step 2: Fetching Transcript")
-                transcript = fetch_transcript(video_id)
-
-            elif source_mode == "Paste Transcript":
-                if not input_transcript.strip():
-                    st.warning("Please paste a transcript.")
-                    st.stop()
-
-                transcript = input_transcript
-
-            else:
-                if uploaded_file is None:
-                    st.warning("Please upload a transcript file.")
-                    st.stop()
-
-                transcript = uploaded_file.read().decode("utf-8", errors="ignore")
-
-            st.subheader("Step 3: Cleaning Transcript")
+            transcript = fetch_transcript(video_id)
             cleaned_transcript = clean_transcript(transcript)
 
             if not cleaned_transcript:
@@ -305,10 +242,7 @@ if generate_btn and not st.session_state.generated:
 
             st.session_state.transcript = cleaned_transcript
 
-            st.subheader("Step 4: Generating Summary + Article")
             summary, article_md = generate_summary_and_article(cleaned_transcript)
-
-            st.subheader("Step 5: Converting Markdown to HTML")
             article_html = markdown_to_html(article_md)
 
             st.session_state.summary = summary
@@ -331,13 +265,11 @@ if generate_btn and not st.session_state.generated:
     finally:
         st.session_state.processing = False
 
-
-
 if st.session_state.generated:
     tab1, tab2, tab3, tab4 = st.tabs([
         "Summary",
         "Article (Markdown)",
-        "Article (HTML Preview)",
+        "Article Preview",
         "Transcript"
     ])
 
