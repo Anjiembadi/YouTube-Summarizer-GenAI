@@ -47,9 +47,9 @@ for key, value in DEFAULT_STATE.items():
 
 def extract_video_id(url: str) -> str:
     patterns = [
-        r"(?:v=|\/)([0-9A-Za-z_-]{11}).*",
-        r"youtu\.be\/([0-9A-Za-z_-]{11})",
-        r"youtube\.com\/shorts\/([0-9A-Za-z_-]{11})"
+        r"(?:v=|/)([0-9A-Za-z_-]{11}).*",
+        r"youtu\.be/([0-9A-Za-z_-]{11})",
+        r"youtube\.com/shorts/([0-9A-Za-z_-]{11})"
     ]
 
     for pattern in patterns:
@@ -82,12 +82,12 @@ def fetch_transcript(video_id: str) -> str:
 
     except Exception as e:
         raise RuntimeError(
-            "Failed to fetch transcript automatically.\n\n"
+            "Automatic transcript fetch failed.\n\n"
             "Possible reasons:\n"
             "1. YouTube blocked the current server/proxy IP.\n"
             "2. The video has no accessible captions.\n"
             "3. The video is restricted or unavailable.\n\n"
-            "Use the manual transcript box below as fallback.\n\n"
+            "Paste the transcript manually below and continue.\n\n"
             f"Details: {e}"
         )
 
@@ -211,7 +211,7 @@ st.write("Paste a YouTube link to generate transcript, summary, and article.")
 
 st.info(
     "If automatic transcript fetching fails because YouTube blocks the server IP, "
-    "you can still paste the transcript manually and generate the output."
+    "you can paste the transcript manually and still generate the output."
 )
 
 with st.sidebar:
@@ -221,9 +221,9 @@ with st.sidebar:
 
 youtube_url = st.text_input("Paste YouTube Video URL")
 manual_transcript = st.text_area(
-    "Manual Transcript Fallback (optional)",
+    "Manual Transcript Fallback",
     height=220,
-    placeholder="If transcript fetch fails, paste the transcript here and click Generate Content."
+    placeholder="If automatic transcript fetch fails, paste the transcript here and click Generate Content."
 )
 
 col1, col2 = st.columns(2)
