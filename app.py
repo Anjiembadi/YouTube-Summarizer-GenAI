@@ -109,19 +109,28 @@ def save_outputs(transcript: str, summary: str, article_md: str, article_html: s
     (output_dir / "article.html").write_text(article_html, encoding="utf-8")
 
 
+import time
+
 def call_llm(prompt: str) -> str:
-    try:
-        response = model.generate_content(prompt)
-        return response.text.strip()
-    except Exception as e:
-        error_message = str(e).lower()
+    max_retries = 3
 
-        if "429" in error_message or "quota" in error_message:
-            raise RuntimeError(
-                "Gemini quota exceeded. Wait a bit and try again."
-            )
+    for attempt in range(max_retries):
+        try:
+            response = model.generate_content(prompt)
+            return response.text.strip()
 
-        raise RuntimeError(f"LLM Error: {e}")
+        except Exception as e:
+            error_message = str(e).lower()
+
+            if "429" in error_message or "quota" in error_message:
+                wait_time = 3 + attempt * 2  # increasing delay
+                st.warning(f"Quota hit. Retrying in {wait_time} seconds...")
+                time.sleep(wait_time)
+                continue
+
+            raise RuntimeError(f"LLM Error: {e}")
+
+    raise RuntimeError("Failed after multiple retries due to quota limits.")
 
 
 def generate_summary_and_article(transcript: str) -> tuple[str, str]:
