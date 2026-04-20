@@ -156,7 +156,7 @@ def call_llm(prompt: str) -> str:
 
 
 
- def generate_summary_and_article(transcript: str) -> tuple[str, str]:
+def generate_summary_and_article(transcript: str) -> tuple[str, str]:
     shortened_transcript = transcript[:2000]
 
     prompt = f"""
