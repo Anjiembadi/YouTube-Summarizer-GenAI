@@ -97,7 +97,7 @@ def fetch_transcript(video_id: str) -> str:
 
     except Exception as e:
         raise RuntimeError(
-            "Failed to fetch transcript. "
+            "Failed to fetch transcript.\n\n"
             "Possible reasons:\n"
             "1. The video has no accessible English captions.\n"
             "2. YouTube blocked the current server/proxy IP.\n"
@@ -148,12 +148,9 @@ def call_llm(prompt: str) -> str:
                     time.sleep(wait_time)
                     continue
 
-                raise RuntimeError(
-                    "Free Gemini quota reached. Please wait 1 minute and try again."
-                )
+                raise RuntimeError("Free Gemini quota reached. Please wait 1 minute and try again.")
 
             raise RuntimeError(f"LLM Error: {e}")
-
 
 
 def generate_summary_and_article(transcript: str) -> tuple[str, str]:
@@ -229,6 +226,8 @@ st.info(
     "If a video still fails, it may not have captions, or YouTube may be blocking the current proxy/server IP."
 )
 
+st.write("Proxy configured:", bool(PROXY_USERNAME and PROXY_PASSWORD))
+
 youtube_url = st.text_input("Paste YouTube Video URL")
 
 col1, col2 = st.columns(2)
@@ -260,21 +259,17 @@ if generate_btn:
                 st.warning("Please enter a YouTube URL.")
                 st.stop()
 
-            # Step 1: Extract video ID
             video_id = extract_video_id(youtube_url)
             st.session_state.video_id = video_id
 
-            # Step 2: Fetch transcript
             transcript = fetch_transcript(video_id)
 
-            # Step 3: Clean transcript
             cleaned_transcript = clean_transcript(transcript)
             if not cleaned_transcript:
                 raise RuntimeError("Transcript is empty after cleaning.")
 
             st.session_state.transcript = cleaned_transcript
 
-            # Step 4: Generate summary + article
             summary, article_md = generate_summary_and_article(cleaned_transcript)
             article_html = markdown_to_html(article_md)
 
@@ -283,7 +278,6 @@ if generate_btn:
             st.session_state.article_html = article_html
             st.session_state.generated = True
 
-            # Step 5: Save output files
             save_outputs(
                 st.session_state.transcript,
                 st.session_state.summary,
